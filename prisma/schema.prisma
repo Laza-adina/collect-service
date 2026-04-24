@@ -1,0 +1,235 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+// ─────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────
+
+enum UgcSource {
+  CAMPAIGN       // vient du campaign-service (contenu approuvé)
+  HASHTAG        // collecté via hashtag social
+  MENTION        // collecté via mention de la marque
+  REVIEW_REQUEST // demande d'avis après achat
+  MANUAL         // ajout manuel par l'agence
+}
+
+enum UgcMediaType {
+  VIDEO
+  PHOTO
+  CAROUSEL
+  TESTIMONIAL_VIDEO
+  TEXT_REVIEW
+}
+
+enum ModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FLAGGED
+}
+
+enum ReviewStatus {
+  PENDING
+  SENT
+  COMPLETED
+  EXPIRED
+}
+
+enum WidgetLayout {
+  GRID
+  MASONRY
+  CAROUSEL
+  SHOP_THE_LOOK
+}
+
+// ─────────────────────────────────────────
+// UGC ASSET — Contenu collecté
+// ─────────────────────────────────────────
+
+model UgcAsset {
+  id              String           @id @default(uuid())
+
+  // Refs externes
+  brandId         String           @map("brand_id")
+  agencyUserId    String           @map("agency_user_id")
+  campaignId      String?          @map("campaign_id")     // optionnel, ref campaign-service
+  creatorUserId   String?          @map("creator_user_id") // optionnel
+
+  // Contenu
+  source          UgcSource
+  mediaType       UgcMediaType     @map("media_type")
+  url             String
+  thumbnail       String?
+  caption         String?
+  authorHandle    String?          @map("author_handle")   // handle social si collecté
+  platform        String?          // INSTAGRAM, TIKTOK, etc.
+  originalPostUrl String?          @map("original_post_url")
+
+  // Modération
+  moderationStatus ModerationStatus @default(PENDING) @map("moderation_status")
+  moderatedBy     String?          @map("moderated_by")
+  moderatedAt     DateTime?        @map("moderated_at")
+  rejectionReason String?          @map("rejection_reason")
+
+  // Stats (mis à jour par analytics-service)
+  views           Int              @default(0)
+  clicks          Int              @default(0)
+  conversions     Int              @default(0)
+
+  // Tags produits (shop the look)
+  productTags     ProductTag[]
+  widgetItems     WidgetItem[]
+
+  isActive        Boolean          @default(true) @map("is_active")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@map("ugc_assets")
+}
+
+// ─────────────────────────────────────────
+// PRODUCT TAG — Shop The Look
+// ─────────────────────────────────────────
+
+model ProductTag {
+  id          String   @id @default(uuid())
+  ugcAssetId  String   @map("ugc_asset_id")
+
+  // Ref marketplace-service
+  productId   String   @map("product_id")
+  productName String   @map("product_name")
+  productUrl  String?  @map("product_url")
+  imageUrl    String?  @map("image_url")
+  price       Float?
+
+  // Position sur l'image (coordonnées pour le "pin")
+  posX        Float?   @map("pos_x") // % de la largeur
+  posY        Float?   @map("pos_y") // % de la hauteur
+
+  asset       UgcAsset @relation(fields: [ugcAssetId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("product_tags")
+}
+
+// ─────────────────────────────────────────
+// REVIEW REQUEST — Demande d'avis après achat
+// ─────────────────────────────────────────
+
+model ReviewRequest {
+  id              String        @id @default(uuid())
+  brandId         String        @map("brand_id")
+  agencyUserId    String        @map("agency_user_id")
+
+  // Client final (pas forcément un créateur enregistré)
+  customerEmail   String        @map("customer_email")
+  customerName    String?       @map("customer_name")
+  orderId         String?       @map("order_id")      // ref commande e-commerce
+
+  // Produit commandé
+  productId       String?       @map("product_id")
+  productName     String        @map("product_name")
+
+  status          ReviewStatus  @default(PENDING)
+  sentAt          DateTime?     @map("sent_at")
+  completedAt     DateTime?     @map("completed_at")
+  expiresAt       DateTime?     @map("expires_at")
+
+  // Token unique pour le lien de review
+  token           String        @unique @default(uuid())
+
+  review          CustomerReview?
+
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  @@map("review_requests")
+}
+
+// ─────────────────────────────────────────
+// CUSTOMER REVIEW — Avis soumis par le client
+// ─────────────────────────────────────────
+
+model CustomerReview {
+  id              String        @id @default(uuid())
+  reviewRequestId String        @unique @map("review_request_id")
+
+  rating          Int           // 1 à 5
+  comment         String?
+  mediaUrl        String?       @map("media_url")   // photo ou vidéo témoignage
+  mediaType       UgcMediaType? @map("media_type")
+
+  // Modération avant affichage
+  moderationStatus ModerationStatus @default(PENDING) @map("moderation_status")
+  isPublished     Boolean       @default(false) @map("is_published")
+  publishedAt     DateTime?     @map("published_at")
+
+  request         ReviewRequest @relation(fields: [reviewRequestId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  @@map("customer_reviews")
+}
+
+// ─────────────────────────────────────────
+// WIDGET — Galerie intégrable (e-commerce)
+// ─────────────────────────────────────────
+
+model Widget {
+  id            String       @id @default(uuid())
+  brandId       String       @map("brand_id")
+  agencyUserId  String       @map("agency_user_id")
+
+  name          String
+  slug          String       @unique
+  layout        WidgetLayout @default(GRID)
+  title         String?
+  description   String?
+
+  // Filtres auto-alimentation
+  autoFilter    Json?        @map("auto_filter") // { platform, niche, productId, ... }
+  maxItems      Int          @default(12) @map("max_items")
+
+  // Embed config
+  primaryColor  String?      @map("primary_color")
+  showCaption   Boolean      @default(true) @map("show_caption")
+  showHandle    Boolean      @default(true) @map("show_handle")
+  showBuyButton Boolean      @default(false) @map("show_buy_button")
+
+  isActive      Boolean      @default(true) @map("is_active")
+  embedKey      String       @unique @default(uuid()) @map("embed_key")
+
+  items         WidgetItem[]
+
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  @@map("widgets")
+}
+
+model WidgetItem {
+  id          String   @id @default(uuid())
+  widgetId    String   @map("widget_id")
+  ugcAssetId  String   @map("ugc_asset_id")
+  position    Int      @default(0)
+
+  widget      Widget   @relation(fields: [widgetId], references: [id], onDelete: Cascade)
+  asset       UgcAsset @relation(fields: [ugcAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([widgetId, ugcAssetId])
+  @@map("widget_items")
+}
