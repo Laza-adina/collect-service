@@ -15,10 +15,16 @@ const app = express();
 const PORT = process.env.PORT || 3004;
 
 app.use(helmet());
+
+//cors
 app.use(cors({
-  origin: (process.env.ALLOWED_ORIGINS || '').split(','),
-  credentials: true,
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
+app.options('*', cors());
+//-----
 app.use(rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX) || 200,
